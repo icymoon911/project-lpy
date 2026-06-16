@@ -1,0 +1,53 @@
+Welcome to Lpy's documentation!
+##############
+
+.. figure:: _images/gallery/tomato.png
+
+L-systems were conceived as a mathematical framework for modeling growth of plants.
+L-Py is a simulation software that mixes L-systems construction with the Python high-level modeling language.
+In addition to this software module, an integrated visual development environment has been developed that facilitates the creation of plant models.
+In particular, easy to use optimization tools have been integrated.
+Thanks to Python and its modular approach, this framework makes it possible to integrate a variety of tools defined in different modeling context,
+in particular tools from the OpenAlea platform. Additionally, it can be integrated as a simple growth simulation module
+into more complex computational pipelines.
+
+
+
+
+Documentation
+=============
+
+.. toctree::
+    :maxdepth: 2
+
+    ./user/installing.rst
+    ./user/lsystems.rst
+    ./user/filesyntax.rst
+    ./user/editor.rst
+    ./user/turtleBasic.rst
+    ./user/turtleAdvanced.rst
+    ./user/tutorial.rst
+    ./user/subtelties.rst
+    ./user/helpcard.rst
+    ./user/integration.rst
+
+Modules and objects included in Lpy are also described in :ref:`lpy_reference`.
+
+.. warning::
+
+   This Guide is still very much in progress. Many aspects of Lpy are not covered.
+
+References
+==========
+
+  * F. Boudon, C. Pradal, T. Cokelaer, P. Prusinkiewicz, C. Godin. L-Py: an L-system simulation framework for modeling plant architecture development based on a dynamic language. Frontiers in Plant Science, Frontiers, 2012, 3 (76), doi: `10.3389/fpls.2012.00076 <https://dx.doi.org/10.3389/fpls.2012.00076>`__.
+ 
+For more details on Lsystems, see also:
+
+  *  F. Boudon, T. Cokelaer, C. Pradal and C. Godin, L-Py, an open L-systems framework in Python, FSPM 2010
+
+L-Py was inspired by `Lstudio/cpfg-lpfg <http://algorithmicbotany.org/lstudio>`__ defined by P. Prusinkiewicz et al. See also
+
+  *  P. Prusinkiewicz et al., 89, The algorithmic Beauty of Plants, Springer-Verlag.
+  *  P. Prusinkiewicz. Graphical applications of L-systems. Proceedings of Graphics Interface '86, pp. 247-253.
+  *  P. Prusinkiewicz, R. Karwowski, and B. Lane. The L+C plant modelling language. In Functional-Structural Plant Modelling in Crop Production, J. Vos et al. (eds.), Springer, 2007.

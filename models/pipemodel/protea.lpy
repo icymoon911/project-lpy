@@ -1,0 +1,171 @@
+from random import random,seed
+
+seed(10)
+
+STEPS = 150    # number of simulation steps
+dt = 0.05      # simuulation time increment
+
+PL = 1         # plastochron
+D = 1          #internode elongation time
+ANG = 55       # branching angle
+l_seg = 0.1    # segment length - for drawing purposes
+
+INTERNODE, FLOWER = range(2)
+
+def func(a,b):
+    return 0.01+ b
+
+module A    # apex: age, order
+module K    # flower/fruit: age
+module I    # internode: age, area
+module S    # internode's segment: length	
+
+Axiom: @Gc RollL(60) A(0,0)
+
+derivation length: STEPS
+def Start():
+    backward()
+
+ignore: + - / \ _ Elasticity
+
+production:
+
+# Apex grows older; upon reaching plastochron PL, it
+#   produces one or two lateral branches and transforms
+#   itself into a flower/fruit (sympodial branching) 
+
+A(t,o) :
+	t += dt
+	if (t<PL) :
+		produce A(t,o)
+	t -= PL
+	e =  0.0035 * pow(o, 1.2 )
+	print (e)
+	nproduce Elasticity(e) I(t,0) RollR(90) 
+	nproduce [ +(ANG) A(t,o+1) ] 
+	if (random() < 0.7):
+		nproduce [ -(ANG) A(t,o+1) ] 
+	produce K(t) 
+
+# flowers grow older (they persist indefinitely)
+K(t) --> K(t+dt)
+
+# Internodes grow older and propagate branch width
+#   information according to the pipe model 
+
+#I(t,w) >> [ I(tr1,wr1) ] [ I(tr2,wr2) ] --> I(t+dt,wr1+wr2+1)
+#I(t,w) >> [ I(tr1,wr1) ]  --> I(t+dt,wr1+1)
+#I(t,w) >> [ A(tr1,o1) ] [ A(tr2,o2) ]  --> I(t+dt,1)
+#I(t,w) >> [ A(tr1,o1) ]  --> I(t+dt,1)
+
+#iterator version of pipe model
+I(t,w) >> ?I(i) :
+   m = i.next()
+   wr = 1
+   assert m.name == '['
+   while m.name == '[':
+     m = i.next(onlyConsidered=True)
+     #print m.name
+     if m.name == 'I':
+       wr+= m[1]
+     i.toEndBracket()
+     m=i.next()
+   produce I(t+dt,wr)
+
+I(t,w) >> ?I(i) :
+   m = i.next()
+   wr = 1
+   assert m.name == '['
+   while m.name == '[':
+     m = i.next()
+     while m.name not in ['A','I']:
+       m = i.next()
+     if m.name == 'I':
+       wr+= m[1]
+     i.toEndBracket()
+     m=i.next()
+   produce I(t+dt,wr)
+
+
+I(t,w) >> all([?I(iterator)]) :
+   wr = 1
+   for it in iterator:
+     m = it.next()
+     while m.name not in ['A','I']:
+       m = i.next()
+     if m.name == 'I':
+       wr+= m[1]
+   produce I(t+dt,wr)
+
+# real python version with multiple pattern matching.
+I(t,w) >> all( [ *(name in ['A','I'] , tr, wr) ] ) --> I(t+dt,sum([v for n,v in zip(name,wr) if n == 'I'])+1)
+
+I(t,w) >> all( [ *(name in ['A','I'] , tr, wr) ] ) :
+   l = 1
+   for n,v in zip(name,wr):
+      if n == 'I':
+        l += v
+   produce I(t+dt,l)
+
+homomorphism:
+maximum depth: 300
+
+# A flower/fruit is visualized as a spere on a pedicel 
+
+K(t) --> _(0.025) F(0.01+0.2*func(FLOWER,t/D)) [ ;(11) Sphere(0.05*func(FLOWER,t/D))] 
+
+# The internode width is a function of the number of pipes.
+#   The length is a sigmoidal function of its age. 
+
+I(t,w) --> _(0.01+0.025*pow(w, 0.35)) S(func(INTERNODE,t/D)) 
+
+# The internode is decomposed into a sequence of segments
+
+S(l) :
+	""" segment interpretation """
+	if (l > l_seg) :
+		produce F(l_seg+0.01) S(l-l_seg)
+	elif l > 0 :
+		produce F(0.01+l);
+
+endlsystem
+###### INITIALISATION ######
+
+__lpy_code_version__ = 1.1
+
+def __initialiseContext__(context):
+	import openalea.plantgl.all as pgl
+	Color_1 = pgl.Material("Color_1" , ambient = (15,10,2) , diffuse = 5.86667 , )
+	Color_1.name = "Color_1"
+	context.turtle.setMaterial(1,Color_1)
+	Color_2 = pgl.Material("Color_2" , ambient = (20,13,3) , diffuse = 5.54815 , )
+	Color_2.name = "Color_2"
+	context.turtle.setMaterial(2,Color_2)
+	Color_3 = pgl.Material("Color_3" , ambient = (26,17,4) , diffuse = 5.22963 , )
+	Color_3.name = "Color_3"
+	context.turtle.setMaterial(3,Color_3)
+	Color_4 = pgl.Material("Color_4" , ambient = (31,21,6) , diffuse = 4.91111 , )
+	Color_4.name = "Color_4"
+	context.turtle.setMaterial(4,Color_4)
+	Color_5 = pgl.Material("Color_5" , ambient = (37,25,7) , diffuse = 4.59259 , )
+	Color_5.name = "Color_5"
+	context.turtle.setMaterial(5,Color_5)
+	Color_6 = pgl.Material("Color_6" , ambient = (42,29,9) , diffuse = 4.27408 , )
+	Color_6.name = "Color_6"
+	context.turtle.setMaterial(6,Color_6)
+	Color_7 = pgl.Material("Color_7" , ambient = (48,33,10) , diffuse = 3.95556 , )
+	Color_7.name = "Color_7"
+	context.turtle.setMaterial(7,Color_7)
+	Color_8 = pgl.Material("Color_8" , ambient = (53,37,12) , diffuse = 3.63704 , )
+	Color_8.name = "Color_8"
+	context.turtle.setMaterial(8,Color_8)
+	Color_9 = pgl.Material("Color_9" , ambient = (59,41,13) , diffuse = 3.31852 , )
+	Color_9.name = "Color_9"
+	context.turtle.setMaterial(9,Color_9)
+	Color_10 = pgl.Material("Color_10" , ambient = (65,45,15) , diffuse = 3 , )
+	Color_10.name = "Color_10"
+	context.turtle.setMaterial(10,Color_10)
+	Color_11 = pgl.Material("Color_11" , ambient = (0,22,3) , diffuse = 4.59091 , )
+	Color_11.name = "Color_11"
+	context.turtle.setMaterial(11,Color_11)
+	context.animation_timestep = 0.001

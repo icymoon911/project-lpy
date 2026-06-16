@@ -1,0 +1,38 @@
+import os
+fname = 'a_module2.py'
+with open(fname,'w') as f:
+  f.write('def test(): pass')
+
+def delete_files(fname):
+    if os.path.exists(fname) :
+      os.remove(fname)
+    if os.path.exists(fname+'c') :
+      os.remove(fname+'c')
+
+try:
+    from a_module2 import test
+except Exception as e:
+    testname = 'a_'+'m'+'o'+'d'+'u'+'l'+'e'+'2.py'
+    correctfilename = (testname == fname)
+    if not correctfilename:
+      delete_files(fname)
+      raise ValueError("Wrong filename was generated: "+fname) 
+    else:
+      import warnings
+      if os.path.exists(testname):
+        warnings.warn("File generated but cannot be imported.")
+      else:
+        warnings.warn("File cannot be generated.")
+
+delete_files(fname)
+
+Axiom: 
+
+derivation length: 1
+production:
+
+
+interpretation:
+
+
+endlsystem

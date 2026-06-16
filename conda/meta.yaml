@@ -1,0 +1,71 @@
+{% set version = environ.get('SETUPTOOLS_SCM_PRETEND_VERSION', "0.0.0.dev") %}
+
+package:
+  name: openalea.lpy
+  version: {{ version }}
+
+source:
+  path: ..
+
+about:
+  home: https://github.com/openalea/lpy
+  license: Cecill-C
+  summary: Lindenmayer Systems in Python package for OpenAlea.
+
+build:
+  string: py{{ PY_VER }}
+  number: 0
+  preserve_egg_dir: True
+  script:
+    - {{ PYTHON }} -m pip install --prefix={{ PREFIX }} . --no-deps --no-build-isolation -vv
+  entry_points:
+    - lpy = openalea.lpy.gui.lpystudio:main
+    - cpfg2lpy = openalea.lpy.cpfg_compat.cpfg2lpy:main
+
+requirements:
+  host:
+    - python
+    - setuptools
+    - setuptools_scm
+    - scikit-build-core
+    - openalea.plantgl
+    - boost
+    - pyqt
+  build:
+    - binutils_impl_linux-64           # [linux]
+    - {{ compiler('cxx') }}
+    - python
+    - cmake
+    - pkg-config                        # [linux]
+    - make                              # [unix]
+    - menuinst                          # [win]
+  run:
+    - python
+    - setuptools
+    - {{ pin_compatible('openalea.plantgl', max_pin='x.x') }}
+    - boost
+    - ipython
+    - qtconsole
+    - jupyter_client # <6
+    - pyopengl
+    - pyqglviewer
+    - jsonschema
+
+app:
+  entry: lpy
+  summary: Plant simulation software
+  icon: icon_64x64.png
+
+test:
+  requires:
+    - pytest
+    - pandas
+  imports:
+    - openalea.lpy
+  source_files:
+    - test/
+    - share/
+  commands:
+    - cd test
+    - pytest -v --ignore=cembedding/test_cembedding.py --ignore=test_lsysparameter.py --ignore=test_pickle.py --ignore=test_predecessor_at_scale.py --ignore=test_parsing.py --ignore=test_regexpmatching.py --ignore=test_tree_matching.py --ignore=test_ui.py
+

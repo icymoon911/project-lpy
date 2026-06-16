@@ -1,0 +1,17 @@
+
+
+
+Axiom: 
+  for i in range(500000): nproduce A B
+
+derivation length: 2
+production:
+
+A : produce B
+
+B : produce A
+
+interpretation:
+
+
+endlsystem

@@ -1,0 +1,19 @@
+#coding: utf-8
+# test special character: é è §
+Axiom: A(u'é') é
+
+derivation length: 1
+production:
+
+é --> é
+
+interpretation:
+
+A(t) --> Label(t)
+
+endlsystem
+###### INITIALISATION ######
+
+__lpy_code_version__ = 1.1
+
+__description__ = 'test special character such as \xe9'
