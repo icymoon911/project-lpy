@@ -185,7 +185,8 @@ class LPyWindow(QMainWindow, lsmw.Ui_MainWindow, ComputationTaskManager) :
         self.actionImportCpfgProject.triggered.connect(lambda : self.importcpfgproject()) 
         self.actionImportCpfgFile.triggered.connect(lambda : self.importcpfgfile()) 
         self.actionClear.triggered.connect(self.clearHistory) 
-        self.actionSaveSession.triggered.connect(self.saveSession) 
+        self.actionSaveSession.triggered.connect(self.saveSession)
+        self._setupSessionActions()
         self.actionRun.triggered.connect(self.run) 
         self.actionAnimate.triggered.connect(self.animate) 
         self.actionStep.triggered.connect(self.step) 
@@ -427,7 +428,117 @@ class LPyWindow(QMainWindow, lsmw.Ui_MainWindow, ComputationTaskManager) :
         if e.isAccepted():
             self.interpreter.locals.clear()
     def saveSession(self):
-        settings.saveState(self)        
+        settings.saveState(self)
+
+    # --- Session export / import (.lpysession) ---------------------------------
+
+    def _setupSessionActions(self):
+        """Programmatically add Export Session / Import Session to File menu."""
+        self.actionExportSession = QAction("Export Session...", self.menuFile)
+        self.actionExportSession.setToolTip(
+            "Export current simulation as a .lpysession snapshot"
+        )
+        self.actionExportSession.triggered.connect(self.export_session)
+
+        self.actionImportSession = QAction("Import Session...", self.menuFile)
+        self.actionImportSession.setToolTip(
+            "Import a .lpysession snapshot into a new tab"
+        )
+        self.actionImportSession.triggered.connect(self.import_session)
+
+        # Insert after actionSaveSession
+        actions = self.menuFile.actions()
+        insert_before = None
+        found_save = False
+        for act in actions:
+            if act is self.actionSaveSession:
+                found_save = True
+                continue
+            if found_save and not act.isSeparator():
+                insert_before = act
+                break
+        if insert_before is not None:
+            self.menuFile.insertAction(insert_before, self.actionExportSession)
+            self.menuFile.insertAction(insert_before, self.actionImportSession)
+        else:
+            self.menuFile.addAction(self.actionExportSession)
+            self.menuFile.addAction(self.actionImportSession)
+
+    def export_session(self, simulation=None):
+        """Export a simulation to a .lpysession file.
+
+        If *simulation* is ``None`` the current simulation is exported.
+        """
+        from . import session_io
+
+        if simulation is None:
+            simulation = self.currentSimulation()
+
+        initial_dir = (
+            os.path.dirname(simulation.fname) if simulation and simulation.fname else '.'
+        )
+        initial_name = os.path.join(
+            initial_dir,
+            (simulation.getShortName() if simulation else 'session') + '.lpysession',
+        )
+        fname, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Session",
+            initial_name,
+            "LPy Session Files (*.lpysession);;All Files (*.*)",
+        )
+        if not fname:
+            return
+        fname = str(fname)
+        if not fname.endswith('.lpysession'):
+            fname += '.lpysession'
+        try:
+            session_io.export_simulation_to_file(simulation, fname)
+            self.statusBar().showMessage("Session exported to '" + fname + "'", 3000)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(
+                self,
+                "Export Session",
+                "Failed to export session:\n" + traceback.format_exc(),
+            )
+
+    def import_session(self):
+        """Import a .lpysession file into a new simulation tab."""
+        from . import session_io
+
+        initial_dir = (
+            os.path.dirname(self.currentSimulation().fname)
+            if self.currentSimulation().fname
+            else '.'
+        )
+        result = QFileDialog.getOpenFileName(
+            self,
+            "Import Session",
+            initial_dir,
+            "LPy Session Files (*.lpysession);;All Files (*.*)",
+        )
+        if not result:
+            return
+        fname = str(result[0]) if isinstance(result, tuple) else str(result)
+        if not fname:
+            return
+        self.acquireCR()
+        try:
+            sim = session_io.import_simulation_from_file(fname, self)
+            sim.restoreState()
+            self.currentSimulationId = sim.index
+            self.statusBar().showMessage("Session imported from '" + fname + "'", 3000)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(
+                self,
+                "Import Session",
+                "Failed to import session:\n" + traceback.format_exc(),
+            )
+        self.releaseCR()        
     def showEvent(self,event):
         if not self._initialized:
             self.init()

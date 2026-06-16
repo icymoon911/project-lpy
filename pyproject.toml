@@ -94,3 +94,4 @@ Changelog = "https://github.com/openalea/lpy/releases"
 [project.scripts]
 "lpy" = "openalea.lpy.gui.lpystudio:main"
 "cpfg2lpy" = "openalea.lpy.cpfg_compat.cpfg2lpy:main"
+"lpy-session-merge" = "openalea.lpy.gui.lpy_session_merge:main"

@@ -60,6 +60,9 @@ class LpyTabBar(QTabBar):
             action = menu.addAction('Close all except this ')
             action.triggered.connect(self.closeAllExcept)
             menu.addSeparator()
+            action = menu.addAction('Export Session...')
+            action.triggered.connect(self.exportSession)
+            menu.addSeparator()
             if self.lpystudio.simulations[self.selection].readonly:
                 action = menu.addAction('Remove Readonly ')
                 action.triggered.connect(self.removeReadOnly)
@@ -124,6 +127,11 @@ class LpyTabBar(QTabBar):
 
     def closeAllExcept(self):
         self.lpystudio.closeAllExcept(self.selection)
+
+    def exportSession(self):
+        """Export the simulation of the tab under the context menu."""
+        if self.selection >= 0 and self.selection < len(self.lpystudio.simulations):
+            self.lpystudio.export_session(self.lpystudio.simulations[self.selection])
 
     def copyFilename(self):
         QApplication.clipboard().setText(self.lpystudio.simulations[self.selection].fname)
