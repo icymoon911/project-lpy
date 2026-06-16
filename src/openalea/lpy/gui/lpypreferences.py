@@ -1,4 +1,6 @@
 from openalea.plantgl.gui.qt import qt
+from openalea.plantgl.gui.qt.QtCore import QObject, Signal
+from openalea.plantgl.gui.qt.QtWidgets import QDialog, QFileDialog
 import os
 from .lpyprofiling import AnimatedProfiling, ProfilingWithFinalPlot, ProfilingWithNoPlot
 
@@ -6,90 +8,154 @@ from . import generate_ui
 from . import lpyprefwidget
 
 
-from openalea.plantgl.gui.qt.QtCore import QObject, Signal
-from openalea.plantgl.gui.qt.QtWidgets import QDialog
+# ---------------------------------------------------------------------------
+# Declarative preference bindings
+# ---------------------------------------------------------------------------
+# Each entry maps:
+#   widget_attr  – attribute name on the Ui_PreferenceDialog widget
+#   editor_attr  – attribute name on the LPyWindow editor (or None for custom)
+#   signal       – signal name on the widget to connect ('clicked', 'valueChanged', …)
+#   set_method   – optional method name on the editor to call instead of setattr
+#                  (used when the editor exposes a setter rather than a plain attribute)
+#
+# The 'init' callable reads the current value from the editor and applies it
+# to the widget.  The 'connect' callable wires the widget signal to the editor.
+# ---------------------------------------------------------------------------
+
+_SIMPLE_CHECK_BINDINGS = [
+    # (widget_attr, editor_attr)
+    ('startupReloadEdit',  'reloadAtStartup'),
+    ('fileMonitoringEdit', 'fileMonitoring'),
+    ('fileBackupEdit',     'fileBackupEnabled'),
+    ('codeBackupEdit',     'codeBackupEnabled'),
+    ('pycodeDebugEdit',    'showPyCode'),
+    ('useThreadEdit',      'with_thread'),
+    ('fitViewAnimateEdit', 'fitAnimationView'),
+    ('fitViewRunEdit',     'fitRunView'),
+    ('visuInfoEdit',       'displayMetaInfo'),
+]
+
+_SIMPLE_VALUE_BINDINGS = [
+    # (widget_attr, editor_attr, signal)
+    ('historySizeEdit', 'historymaxsize', 'valueChanged'),
+]
 
 
 class LpyPreferences:
-    def __init__(self,lpyeditor):
+    def __init__(self, lpyeditor):
         self.editor = lpyeditor
         self.widget = None
         self.dialog = None
+
+    # ------------------------------------------------------------------
+    # show() – build the dialog and bind everything declaratively
+    # ------------------------------------------------------------------
     def show(self):
-        if True:
-            self.dialog = QDialog(self.editor)
-            self.widget = lpyprefwidget.Ui_PreferenceDialog()
-            self.widget.setupUi(self.dialog)
-            self.widget.toolbarAppEdit.setCurrentIndex(self.editor.getToolBarApp()[0])
-            self.widget.toolbarAppEdit.activated.connect(self.editor.setToolBarApp) # QObject.connect(self.widget.toolbarAppEdit,SIGNAL('activated(const QString&)'),self.editor.setToolBarApp)
-            self.widget.fontFamilyEdit.setCurrentFont(self.editor.codeeditor.currentFont())
-            self.widget.fontSizeEdit.setValue(self.editor.codeeditor.currentFont().pointSize())
-            self.widget.fontFamilyEdit.currentFontChanged.connect(self.editor.codeeditor.setEditionFontFamily)
-            self.widget.fontSizeEdit.valueChanged.connect(self.editor.codeeditor.setEditionFontSize)
-            self.widget.spaceForTabEdit.setChecked(self.editor.codeeditor.replaceTab)
-            self.widget.spaceForTabEdit.clicked.connect(self.editor.codeeditor.setReplaceTab) # QObject.connect(self.widget.spaceForTabEdit,SIGNAL('clicked(bool)'),self.editor.codeeditor.setReplaceTab)
-            self.widget.tabSizeEdit.setValue(self.editor.codeeditor.tabSize())
-            self.widget.tabSizeEdit.valueChanged.connect(self.editor.codeeditor.setTabSize) # QObject.connect(self.widget.tabSizeEdit,SIGNAL('valueChanged(int)'),self.editor.codeeditor.setTabSize)
-            self.widget.startupReloadEdit.setChecked(self.editor.reloadAtStartup)
-            self.widget.startupReloadEdit.clicked.connect(lambda x : setattr(self.editor,'reloadAtStartup',x)) # QObject.connect(self.widget.startupReloadEdit,SIGNAL('clicked(bool)'),lambda x : setattr(self.editor,'reloadAtStartup',x))
-            self.widget.fileMonitoringEdit.setChecked(self.editor.fileMonitoring)
-            self.widget.fileMonitoringEdit.clicked.connect(lambda x : setattr(self.editor,'fileMonitoring',x)) # QObject.connect(self.widget.fileMonitoringEdit,SIGNAL('clicked(bool)'),lambda x : setattr(self.editor,'fileMonitoring',x))
-            self.widget.fileBackupEdit.setChecked(self.editor.fileBackupEnabled)
-            self.widget.fileBackupEdit.clicked.connect(lambda x : setattr(self.editor,'fileBackupEnabled',x)) # QObject.connect(self.widget.fileBackupEdit,SIGNAL('clicked(bool)'),lambda x : setattr(self.editor,'fileBackupEnabled',x))
-            self.widget.codeBackupEdit.setChecked(self.editor.codeBackupEnabled)
-            self.widget.codeBackupEdit.clicked.connect(lambda x : setattr(self.editor,'codeBackupEnabled',x)) # QObject.connect(self.widget.codeBackupEdit,SIGNAL('clicked(bool)'),lambda x : setattr(self.editor,'codeBackupEnabled',x))
-            self.widget.historySizeEdit.setValue(self.editor.historymaxsize)
-            self.widget.historySizeEdit.valueChanged.connect(lambda x : setattr(self.editor,'historymaxsize',x)) # QObject.connect(self.widget.historySizeEdit,SIGNAL('valueChanged(int)'),lambda x : setattr(self.editor,'historymaxsize',x))
-            self.widget.pycodeDebugEdit.setChecked(self.editor.showPyCode)
-            self.widget.pycodeDebugEdit.clicked.connect(lambda x : setattr(self.editor,'showPyCode',x)) # QObject.connect(self.widget.pycodeDebugEdit,SIGNAL('clicked(bool)'),lambda x : setattr(self.editor,'showPyCode',x))
-            self.widget.useThreadEdit.setChecked(self.editor.with_thread)
-            self.widget.useThreadEdit.clicked.connect(lambda x : setattr(self.editor,'with_thread',x)) # QObject.connect(self.widget.useThreadEdit,SIGNAL('clicked(bool)'),lambda x : setattr(self.editor,'with_thread',x))
-            self.widget.fitViewAnimateEdit.setChecked(self.editor.fitAnimationView)
-            self.widget.fitViewAnimateEdit.clicked.connect(lambda x : setattr(self.editor,'fitAnimationView',x)) # QObject.connect(self.widget.fitViewEdit,SIGNAL('clicked(bool)'),lambda x : setattr(self.editor,'fitAnimationView',x))
-            self.widget.fitViewRunEdit.setChecked(self.editor.fitRunView)
-            self.widget.fitViewRunEdit.clicked.connect(lambda x : setattr(self.editor,'fitRunView',x)) # QObject.connect(self.widget.fitViewEdit,SIGNAL('clicked(bool)'),lambda x : setattr(self.editor,'fitAnimationView',x))
-            self.widget.visuInfoEdit.setChecked(self.editor.displayMetaInfo)
-            self.widget.visuInfoEdit.clicked.connect(lambda x : setattr(self.editor,'displayMetaInfo',x)) # QObject.connect(self.widget.visuInfoEdit,SIGNAL('clicked(bool)'),lambda x : setattr(self.editor,'displayMetaInfo',x))
-            self.widget.gccPathButton.clicked.connect(self.chooseCCompilerPath) # QObject.connect(self.widget.gccPathButton,SIGNAL('clicked(bool)'),self.chooseCCompilerPath)
-            self.widget.gccPathEdit.setText(self.editor.cCompilerPath)
-            self.widget.gccPathEdit.returnPressed.connect(self.editor.setCCompilerPath) # QObject.connect(self.widget.gccPathEdit,SIGNAL('returnPressed()'),self.editor.setCCompilerPath)
-            self.setPofilingButton(self.editor.profilingMode)
-            self.widget.profilingAnimatedButton.clicked.connect(self.setProfilingAnimMode) # QObject.connect(self.widget.profilingAnimatedButton,SIGNAL('clicked(bool)'),self.setProfilingAnimMode)
-            self.widget.profilingFinalPlotButton.clicked.connect(self.setProfilingFinalPlotMode) # QObject.connect(self.widget.profilingFinalPlotButton,SIGNAL('clicked(bool)'),self.setProfilingFinalPlotMode)
-            self.widget.profilingNoPlotButton.clicked.connect(self.setProfilingNoPlotMode) # QObject.connect(self.widget.profilingNoPlotButton,SIGNAL('clicked(bool)'),self.setProfilingNoPlotMode)
-            self.widget.integratedViewEdit.setChecked(self.editor.use_own_view3D)
-            self.widget.integratedViewEdit.clicked.connect(self.editor.setIntegratedView3D) # QObject.connect(self.widget.integratedViewEdit,SIGNAL('clicked(bool)'),self.editor.setIntegratedView3D)
-            #if not self.editor.withinterpreter:
-            self.widget.textOutputBox.setEnabled(False)
-            #else:
-            #    self.widget.LPyConsoleButton.setChecked(self.editor.shellwidget.isSelfStdOutRedirection() or  self.editor.shellwidget.hasMultipleStdOutRedirection())
-            #    self.widget.LPyConsoleButton.clicked.connect(self.setOutputRedirection) # QObject.connect(self.widget.LPyConsoleButton,SIGNAL('clicked(bool)'),self.setOutputRedirection)
-            #    self.widget.systemConsoleButton.setChecked(self.editor.shellwidget.isSysStdOutRedirection() or  self.editor.shellwidget.hasMultipleStdOutRedirection())
-            #    self.widget.systemConsoleButton.clicked.connect(self.setOutputRedirection) # QObject.connect(self.widget.systemConsoleButton,SIGNAL('clicked(bool)'),self.setOutputRedirection)
+        self.dialog = QDialog(self.editor)
+        self.widget = lpyprefwidget.Ui_PreferenceDialog()
+        self.widget.setupUi(self.dialog)
+
+        self._bind_toolbar()
+        self._bind_font()
+        self._bind_code_editor_prefs()
+        self._bind_checkbox_prefs()
+        self._bind_value_prefs()
+        self._bind_compiler_path()
+        self._bind_profiling()
+        self._bind_integrated_view()
+        self._bind_disabled_controls()
+
         self.dialog.show()
+
+    # -- toolbar --------------------------------------------------------
+    def _bind_toolbar(self):
+        self.widget.toolbarAppEdit.setCurrentIndex(self.editor.getToolBarApp()[0])
+        self.widget.toolbarAppEdit.activated.connect(self.editor.setToolBarApp)
+
+    # -- font -----------------------------------------------------------
+    def _bind_font(self):
+        ce = self.editor.codeeditor
+        self.widget.fontFamilyEdit.setCurrentFont(ce.currentFont())
+        self.widget.fontSizeEdit.setValue(ce.currentFont().pointSize())
+        self.widget.fontFamilyEdit.currentFontChanged.connect(ce.setEditionFontFamily)
+        self.widget.fontSizeEdit.valueChanged.connect(ce.setEditionFontSize)
+
+    # -- code-editor prefs (replaceTab, tabSize) -------------------------
+    def _bind_code_editor_prefs(self):
+        ce = self.editor.codeeditor
+        self.widget.spaceForTabEdit.setChecked(ce.replaceTab)
+        self.widget.spaceForTabEdit.clicked.connect(ce.setReplaceTab)
+        self.widget.tabSizeEdit.setValue(ce.tabSize())
+        self.widget.tabSizeEdit.valueChanged.connect(ce.setTabSize)
+
+    # -- simple checkbox → editor attribute ------------------------------
+    def _bind_checkbox_prefs(self):
+        for widget_attr, editor_attr in _SIMPLE_CHECK_BINDINGS:
+            w = getattr(self.widget, widget_attr)
+            w.setChecked(getattr(self.editor, editor_attr))
+            w.clicked.connect(lambda x, attr=editor_attr: setattr(self.editor, attr, x))
+
+    # -- value-changed → editor attribute --------------------------------
+    def _bind_value_prefs(self):
+        for widget_attr, editor_attr, signal_name in _SIMPLE_VALUE_BINDINGS:
+            w = getattr(self.widget, widget_attr)
+            w.setValue(getattr(self.editor, editor_attr))
+            getattr(w, signal_name).connect(
+                lambda x, attr=editor_attr: setattr(self.editor, attr, x))
+
+    # -- C compiler path -------------------------------------------------
+    def _bind_compiler_path(self):
+        self.widget.gccPathButton.clicked.connect(self.chooseCCompilerPath)
+        self.widget.gccPathEdit.setText(self.editor.cCompilerPath)
+        self.widget.gccPathEdit.returnPressed.connect(self.editor.setCCompilerPath)
+
+    # -- profiling radio buttons -----------------------------------------
+    def _bind_profiling(self):
+        self.setProfilingButton(self.editor.profilingMode)
+        self.widget.profilingAnimatedButton.clicked.connect(self.setProfilingAnimMode)
+        self.widget.profilingFinalPlotButton.clicked.connect(self.setProfilingFinalPlotMode)
+        self.widget.profilingNoPlotButton.clicked.connect(self.setProfilingNoPlotMode)
+
+    # -- integrated 3D view ----------------------------------------------
+    def _bind_integrated_view(self):
+        self.widget.integratedViewEdit.setChecked(self.editor.use_own_view3D)
+        self.widget.integratedViewEdit.clicked.connect(self.editor.setIntegratedView3D)
+
+    # -- controls that are currently disabled ----------------------------
+    def _bind_disabled_controls(self):
+        self.widget.textOutputBox.setEnabled(False)
+
+    # ------------------------------------------------------------------
+    # Slot helpers
+    # ------------------------------------------------------------------
     def chooseCCompilerPath(self):
-        p = QFileDialog.getExistingDirectory(self.editor, "Choose Compiler Path", self.editor.cCompilerPath )
-        if len(p)> 0:
+        p = QFileDialog.getExistingDirectory(self.editor, "Choose Compiler Path", self.editor.cCompilerPath)
+        if len(p) > 0:
             self.widget.gccPathEdit.setText(p)
             self.editor.setCCompilerPath(p)
+
     def reSetCCompilerPath(self):
         self.editor.setCCompilerPath(self.widget.gccPathEdit.text())
-    def setProfilingAnimMode(self,enabled):
-        if enabled :
+
+    def setProfilingAnimMode(self, enabled):
+        if enabled:
             self.editor.profilingMode = AnimatedProfiling
-    def setProfilingFinalPlotMode(self,enabled):
-        if enabled :
+
+    def setProfilingFinalPlotMode(self, enabled):
+        if enabled:
             self.editor.profilingMode = ProfilingWithFinalPlot
-    def setProfilingNoPlotMode(self,enabled):
-        if enabled :
+
+    def setProfilingNoPlotMode(self, enabled):
+        if enabled:
             self.editor.profilingMode = ProfilingWithNoPlot
-    def setPofilingButton(self,value):
+
+    def setProfilingButton(self, value):
         if value == AnimatedProfiling:
             self.widget.profilingAnimatedButton.setChecked(True)
         elif value == ProfilingWithFinalPlot:
             self.widget.profilingFinalPlotButton.setChecked(True)
         else:
             self.widget.profilingNoPlotButton.setChecked(True)
-    #def setOutputRedirection(self):
-    #    self.editor.shellwidget.setOutputRedirection(self.widget.LPyConsoleButton.isChecked(),self.widget.systemConsoleButton.isChecked())
-            
+
+    # Keep backward-compatible alias for the old (misspelled) name
+    setPofilingButton = setProfilingButton
