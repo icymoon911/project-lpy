@@ -3,231 +3,405 @@ from openalea.plantgl.gui.qt.QtCore import QMimeData, QObject, QPoint, QRegularE
 from openalea.plantgl.gui.qt.QtGui import QColor, QFont, QPainter, QPalette, QPen, QPixmap, QSyntaxHighlighter, QTextCharFormat, QTextCursor, QTextDocument, QTextOption
 from openalea.plantgl.gui.qt.QtWidgets import QLabel, QTextEdit, QWidget
 
+
+# ---------------------------------------------------------------------------
+# Block state tracker
+# ---------------------------------------------------------------------------
+#
+# Encapsulates the bracket-nesting state machine that was previously mixed
+# into ``LpySyntaxHighlighter``.  ``highlightBlock()`` now consults a
+# ``BlockStateTracker`` instead of manipulating ``linedata`` / ``lineid``
+# directly.
+#
+# State encoding on each QTextBlock:
+#   0           – normal code
+#   1           – inside ``production:`` … ``endlsystem`` block
+#   id (≥2,
+#     bit 2 set)– inside a parenthesized production continuation.  The
+#                 tracker keeps a ``LineData`` entry keyed by *id*.
+# ---------------------------------------------------------------------------
+
 class LineData:
-    def __init__(self,i = None,p = None):
+    __slots__ = ('imbricatedParanthesis', 'previousProductionState')
+
+    def __init__(self, i=None, p=None):
         self.imbricatedParanthesis = i
         self.previousProductionState = p
+
 
 class IdGenerator:
     def __init__(self):
         self.id = 0
         self.stack = []
+
     def __call__(self):
-        if len(self.stack) > 1 :
+        if len(self.stack) > 1:
             return self.stack.pop(0)
-        else :
+        else:
             i = self.id
             self.id += 1
             return i
-    def release(self,i):
+
+    def release(self, i):
         self.stack.append(i)
-        
-class LpySyntaxHighlighter(QSyntaxHighlighter):
-    def __init__(self,editor):
-        QSyntaxHighlighter.__init__(self,editor)
-        self.rules = []
-        self.lpykeywordFormat = QTextCharFormat()
-        self.lpykeywordFormat.setForeground(Qt.darkMagenta)
-        self.lpykeywordFormat.setFontWeight(QFont.Bold)
-        self.lpykeywords = ['Axiom:','production','homomorphism','interpretation',
-                            'decomposition','endlsystem','group','endgroup',
-                            'derivation length','maximum depth','produce','nproduce','nsproduce','makestring','-->',
-                            'consider:','ignore:','forward','backward','isForward','extern',
-                            'Start','End','StartEach','EndEach','getGroup','useGroup','getIterationNb',
-                            'module','-static->','@static','lpyimport','%pastefile','%pastemodule']
-        for pattern in self.lpykeywords:
-            self.rules.append((QRegularExpression(pattern),self.lpykeywordFormat))
-        self.keywordFormat = QTextCharFormat()
-        self.keywordFormat.setForeground(Qt.blue)
-        self.keywordFormat.setFontWeight(QFont.Bold)
-        import keyword
-        self.pykeywords = keyword.kwlist + keyword.softkwlist + ['None','range','xrange', 'True','False','int','float','str','tuple','list']
-        for pattern in self.pykeywords:
-            self.rules.append((QRegularExpression(pattern),self.keywordFormat))
-        self.delimiterFormat = QTextCharFormat()
-        self.delimiterFormat.setForeground(Qt.darkBlue)
-        self.delimiterFormat.setFontWeight(QFont.Bold)
-        self.delimiterkeywords = '[](){}+-*/:<>='
-        self.exprules = []
-        self.prodFormat = QTextCharFormat()
-        self.prodFormat.setForeground(Qt.black)
-        self.prodFormat.setFontWeight(QFont.Bold)
-        self.prodkeywords = ['Axiom:','module','produce','nproduce','nsproduce','makestring','-->','-static->','ignore:','consider:']
-        for pattern in self.prodkeywords:
-            self.exprules.append((QRegularExpression(pattern+'.*$'),len(pattern),self.prodFormat,0))
-        self.funcFormat = QTextCharFormat()
-        self.funcFormat.setForeground(Qt.magenta)
-        self.exprules.append((QRegularExpression('def[ \t]+.*\\('),3,self.funcFormat,1))
-        self.stringFormat = QTextCharFormat()
-        self.stringFormat.setForeground(Qt.darkGray)
-        self.exprules.append((QRegularExpression('\"[^\"]*\"'),0,self.stringFormat,0))
-        self.exprules.append((QRegularExpression("\'[^\']*\'"),0,self.stringFormat,0))
-        self.tabFormat = QTextCharFormat()
-        self.tabFormat.setBackground(QColor(220,220,220))
-        self.spaceFormat = QTextCharFormat()
-        self.spaceFormat.setBackground(QColor(240,240,240))
-        self.tabRule = QRegularExpression("^[ \t]+")
-        self.numberFormat = QTextCharFormat()
-        self.numberFormat.setForeground(Qt.red)
-        self.exprules.append((QRegularExpression('\\d+(\\.\\d+)?(e[\\+\\-]?\\d+)?'),0,self.numberFormat,0))        
-        self.commentFormat = QTextCharFormat()
-        self.commentFormat.setForeground(Qt.darkGreen)
-        self.lsysruleExp = [QRegularExpression('.+:'),QRegularExpression('.+\\-\\->'), QRegularExpression('.+\\-static\\->')]
-        self.commentExp = QRegularExpression('#.+$')
-        self.ruleCommentExp = QRegularExpression('[ \t]+#.+$')
-        self.prodbegExp =  QRegularExpression('[n]produce[ \t]*.')
-        self.setCurrentBlockState(0)
-        self.activated = True
-        self.tabviewactivated = True
+
+
+class BlockStateTracker:
+    """Manages ``LineData`` entries for parenthesized production blocks.
+
+    The highlighter calls :meth:`begin_block` at the top of each
+    ``highlightBlock`` and receives back a small context object describing
+    the *previous* state.  It then calls :meth:`open_paren_block` /
+    :meth:`close_paren_block` as it discovers nesting changes and finally
+    :meth:`end_block` to commit the new block state.
+    """
+
+    def __init__(self):
         self.lineid = IdGenerator()
         self.linedata = {}
-    def setDocument(self,doc):
-        QSyntaxHighlighter.setDocument(self,doc)
-    def genlineid(self):
-        return (self.lineid() << 2) +2
-    def releaselinedata(self,lid):
-        del self.linedata[lid]
-        i =  ((lid-2) >> 2) 
-        self.lineid.release(i)    
-    def setActivation(self,value):
+
+    # --------------------------------------------------------- id helpers
+    def _genlineid(self):
+        return (self.lineid() << 2) + 2
+
+    def _releaselinedata(self, lid):
+        if lid in self.linedata:
+            del self.linedata[lid]
+        i = (lid - 2) >> 2
+        self.lineid.release(i)
+
+    # ---------------------------------------------------- block lifecycle
+    def resolve_previous(self, previous_block_state):
+        """Return ``(is_paren_continuation, line_data_or_None)``.
+
+        If *previous_block_state* has bit 2 set we look up its ``LineData``
+        entry.  If the entry is missing (shouldn't happen, but be robust)
+        we treat the block as a fresh start.
+        """
+        if previous_block_state > 0 and (previous_block_state & 2):
+            data = self.linedata.get(previous_block_state)
+            return True, data
+        return False, None
+
+    def open_paren_state(self, imbricated, previous_production_state):
+        """Create or reuse a ``LineData`` for an open-paren continuation.
+
+        Returns the new block state id.
+        """
+        data = LineData(imbricated, previous_production_state)
+        lid = self._genlineid()
+        self.linedata[lid] = data
+        return lid
+
+    def update_paren_state(self, lid, imbricated, previous_production_state):
+        """Update or replace the ``LineData`` for *lid*.
+
+        If the imbrication count changed we allocate a fresh id (and free
+        the old one) so that Qt's internal caching still works correctly.
+        Returns the (possibly new) block state id.
+        """
+        existing = self.linedata.get(lid)
+        if existing is not None and existing.imbricatedParanthesis == imbricated:
+            return lid
+        if lid in self.linedata:
+            self._releaselinedata(lid)
+        return self.open_paren_state(imbricated, previous_production_state)
+
+    def release(self, lid):
+        """Free the ``LineData`` for *lid* (called when parens close)."""
+        self._releaselinedata(lid)
+
+
+# ---------------------------------------------------------------------------
+# Highlight formats – built once at module level, shared across highlighters
+# ---------------------------------------------------------------------------
+
+def _make_format(fg=None, bg=None, bold=False):
+    fmt = QTextCharFormat()
+    if fg is not None:
+        fmt.setForeground(fg)
+    if bg is not None:
+        fmt.setBackground(bg)
+    if bold:
+        fmt.setFontWeight(QFont.Bold)
+    return fmt
+
+
+FORMATS = {
+    'lpy_keyword':  _make_format(fg=Qt.darkMagenta, bold=True),
+    'py_keyword':   _make_format(fg=Qt.blue, bold=True),
+    'delimiter':    _make_format(fg=Qt.darkBlue, bold=True),
+    'production':   _make_format(fg=Qt.black, bold=True),
+    'function':     _make_format(fg=Qt.magenta),
+    'string':       _make_format(fg=Qt.darkGray),
+    'number':       _make_format(fg=Qt.red),
+    'comment':      _make_format(fg=Qt.darkGreen),
+    'tab':          _make_format(bg=QColor(220, 220, 220)),
+    'space':        _make_format(bg=QColor(240, 240, 240)),
+}
+
+
+# ---------------------------------------------------------------------------
+# Highlight rule tables – declarative, no scattered ``self.xxxFormat`` attrs
+# ---------------------------------------------------------------------------
+
+_LPY_KEYWORDS = [
+    'Axiom:', 'production', 'homomorphism', 'interpretation',
+    'decomposition', 'endlsystem', 'group', 'endgroup',
+    'derivation length', 'maximum depth', 'produce', 'nproduce',
+    'nsproduce', 'makestring', '-->',
+    'consider:', 'ignore:', 'forward', 'backward', 'isForward', 'extern',
+    'Start', 'End', 'StartEach', 'EndEach', 'getGroup', 'useGroup',
+    'getIterationNb',
+    'module', '-static->', '@static', 'lpyimport', '%pastefile', '%pastemodule',
+]
+
+
+def _build_keyword_rules(keywords, fmt):
+    """Return ``[(QRegularExpression, QTextCharFormat), ...]``."""
+    return [(QRegularExpression(pattern), fmt) for pattern in keywords]
+
+
+def _build_extended_rules():
+    """Return ``[(QRegularExpression, prefix_skip, fmt, suffix_skip), ...]``.
+
+    ``prefix_skip`` characters at the start of the match and ``suffix_skip``
+    characters at the end are excluded from the applied format.
+    """
+    import keyword as kw
+    pykw = kw.kwlist + kw.softkwlist + ['None', 'range', 'xrange', 'True', 'False', 'int', 'float', 'str', 'tuple', 'list']
+
+    prod_keywords = [
+        'Axiom:', 'module', 'produce', 'nproduce', 'nsproduce',
+        'makestring', '-->', '-static->', 'ignore:', 'consider:',
+    ]
+
+    rules = []
+    prod_fmt = FORMATS['production']
+    func_fmt = FORMATS['function']
+    string_fmt = FORMATS['string']
+    number_fmt = FORMATS['number']
+
+    for p in prod_keywords:
+        rules.append((QRegularExpression(p + '.*$'), len(p), prod_fmt, 0))
+    rules.append((QRegularExpression(r'def[ \t]+.*\('), 3, func_fmt, 1))
+    rules.append((QRegularExpression(r'"[^"]*"'), 0, string_fmt, 0))
+    rules.append((QRegularExpression(r"'[^']*'"), 0, string_fmt, 0))
+    rules.append((QRegularExpression(r'\d+(\.\d+)?(e[\+\-]?\d+)?'), 0, number_fmt, 0))
+    return rules, pykw
+
+
+# ---------------------------------------------------------------------------
+# Syntax highlighter
+# ---------------------------------------------------------------------------
+
+class LpySyntaxHighlighter(QSyntaxHighlighter):
+    def __init__(self, editor):
+        QSyntaxHighlighter.__init__(self, editor)
+
+        self.tracker = BlockStateTracker()
+        self.activated = True
+        self.tabviewactivated = True
+
+        # Build rule lists from declarative tables
+        self.rules = []
+        self.rules.extend(_build_keyword_rules(_LPY_KEYWORDS, FORMATS['lpy_keyword']))
+
+        extended, pykw = _build_extended_rules()
+        self.exprules = extended
+        self.rules.extend(_build_keyword_rules(pykw, FORMATS['py_keyword']))
+
+        self.delimiterFormat = FORMATS['delimiter']
+        self.delimiterkeywords = '[](){}+-*/:<>=\''
+        self.prodFormat = FORMATS['production']
+        self.tabFormat = FORMATS['tab']
+        self.spaceFormat = FORMATS['space']
+        self.tabRule = QRegularExpression(r'^[ \t]+')
+        self.commentFormat = FORMATS['comment']
+        self.commentExp = QRegularExpression(r'#.+$')
+        self.lsysruleExp = [
+            QRegularExpression(r'.+:'),
+            QRegularExpression(r'.+\-\->'),
+            QRegularExpression(r'.+\-static\->'),
+        ]
+        self.prodbegExp = QRegularExpression(r'[n]produce[ \t]*.')
+        self.setCurrentBlockState(0)
+
+    # ----------------------------------------------------- Qt overrides
+    def setDocument(self, doc):
+        QSyntaxHighlighter.setDocument(self, doc)
+
+    def setActivation(self, value):
         self.activated = value
         self.rehighlight()
-    def setTabViewActivation(self,value):
+
+    def setTabViewActivation(self, value):
         self.tabviewactivated = value
         self.rehighlight()
-    def highlightBlock(self,text):
-      text = str(text)
-      if self.activated:
+
+    # ----------------------------------------------------- highlightBlock
+    def highlightBlock(self, text):
+        text = str(text)
+        if not self.activated:
+            return
+
         lentxt = len(text)
-        prevst = self.currentBlockState() 
+        prevst = self.currentBlockState()
+
+        # 1. Determine high-level block state (production block / normal)
+        new_state = self._resolve_block_state(text, prevst)
+
+        # 2. Apply simple character-level rules (delimiters)
+        self._apply_delimiters(text)
+
+        # 3. Apply production rule-name highlight (only in production blocks)
+        if self.currentBlockState() == 1:
+            self._apply_production_rule_name(text, lentxt)
+
+        # 4. Apply keyword rules
+        self._apply_keyword_rules(text, lentxt)
+
+        # 5. Apply extended rules (strings, numbers, functions, produce(...))
+        self._apply_extended_rules(text, lentxt, prevst)
+
+        # 6. Apply tab/space view
+        if self.tabviewactivated:
+            self._apply_tab_view(text)
+
+        # 7. Apply comments (always last so they override)
+        self._apply_comments(text)
+
+    # ---------------------------------------------- state resolution
+    def _resolve_block_state(self, text, prevst):
+        """Decide and set the new block state, managing bracket tracking."""
         if text.find('production:') >= 0:
             self.setCurrentBlockState(1)
-        elif text.find('endlsystem') >= 0:
+            return 1
+        if text.find('endlsystem') >= 0:
             self.setCurrentBlockState(0)
-        elif self.previousBlockState() == -1:
+            return 0
+        if prevst == -1:
             self.setCurrentBlockState(0)
-        elif self.previousBlockState() & 2:
-            st = self.linedata.get(self.previousBlockState(),None)
-            if not st is None:
-               imbricatedParanthesis = st.imbricatedParanthesis
-            for i,c in enumerate(text):
-                if c == '(': imbricatedParanthesis += 1
-                if c == ')': 
-                    imbricatedParanthesis -= 1
-                    if imbricatedParanthesis <= 0:
+            return 0
+
+        is_paren, data = self.tracker.resolve_previous(prevst)
+        if is_paren and data is not None:
+            imbricated = data.imbricatedParanthesis
+            prev_prod_state = data.previousProductionState
+            end_idx = len(text)
+            for i, c in enumerate(text):
+                if c == '(':
+                    imbricated += 1
+                if c == ')':
+                    imbricated -= 1
+                    if imbricated <= 0:
+                        end_idx = i
                         break
-            if imbricatedParanthesis <= 0:
-                self.setFormat(0,i,self.prodFormat)
-                lid = self.currentBlockState()
-                self.setCurrentBlockState(st.previousProductionState)
+            if imbricated <= 0:
+                self.setFormat(0, end_idx, self.prodFormat)
+                self.setCurrentBlockState(prev_prod_state)
+                # Release the old linedata if we were previously tracking parens
+                if prevst > 0 and (prevst & 2):
+                    self.tracker.release(prevst)
+                return prev_prod_state
             else:
-                self.setFormat(0,len(text),self.prodFormat)
-                lid = self.currentBlockState()
-                if lid < 0 or (lid & 2) == 0 :
-                    lid = self.genlineid()
-                else :
-                    if self.linedata[lid].imbricatedParanthesis != imbricatedParanthesis :
-                       self.releaselinedata(lid)
-                       lid = self.genlineid()
-                self.linedata[lid] = LineData(imbricatedParanthesis,st.previousProductionState)
+                self.setFormat(0, len(text), self.prodFormat)
+                lid = prevst
+                if lid < 0 or (lid & 2) == 0:
+                    lid = self.tracker.open_paren_state(imbricated, prev_prod_state)
+                else:
+                    lid = self.tracker.update_paren_state(lid, imbricated, prev_prod_state)
                 self.setCurrentBlockState(lid)
-        else:
-            self.setCurrentBlockState(self.previousBlockState())
-        if prevst > 0 and (prevst & 2) and self.currentBlockState() < 2:
-            self.releaselinedata(prevst)
-        for i,c in enumerate(text):
+                return lid
+
+        # Carry forward previous state; release any stale paren data
+        if prevst > 0 and (prevst & 2):
+            self.tracker.release(prevst)
+        self.setCurrentBlockState(prevst)
+        return prevst
+
+    # ------------------------------------------------- rule applicators
+    def _apply_delimiters(self, text):
+        for i, c in enumerate(text):
             if c in self.delimiterkeywords:
                 self.setFormat(i, 1, self.delimiterFormat)
-        if self.currentBlockState() == 1:
-            if lentxt > 0 and not text[0] in " \t":
-                for ruleExp in self.lsysruleExp:
-                    match = ruleExp.match(text)
-                    index = match.capturedStart()
-                    if index >= 0:
-                        length = match.capturedLength()
-                        self.setFormat(index, length, self.prodFormat)
-                        break
-        for rule in self.rules:
-            expression = rule[0]
+
+    def _apply_production_rule_name(self, text, lentxt):
+        if lentxt > 0 and text[0] not in ' \t':
+            for ruleExp in self.lsysruleExp:
+                match = ruleExp.match(text)
+                index = match.capturedStart()
+                if index >= 0:
+                    length = match.capturedLength()
+                    self.setFormat(index, length, self.prodFormat)
+                    break
+
+    def _apply_keyword_rules(self, text, lentxt):
+        for expression, fmt in self.rules:
             matches = expression.globalMatch(text)
-            while(matches.hasNext()):
+            while matches.hasNext():
                 match = matches.next()
                 index = match.capturedStart()
                 index_end = match.capturedEnd()
                 length = match.capturedLength()
-                if ((index==0 or not text[index-1].isalnum()) and 
-                   (index_end == lentxt or not text[index_end].isalnum())):
-                    self.setFormat(index, length, rule[1])
+                if ((index == 0 or not text[index - 1].isalnum()) and
+                        (index_end == lentxt or not text[index_end].isalnum())):
+                    self.setFormat(index, length, fmt)
 
-            #index = expression.indexIn(text)
-            #while index >= 0:
-            #    length = expression.matchedLength()
-            #    if ((index == 0 or not text[index-1].isalnum()) and 
-            #       (index+length == lentxt or not text[index+length].isalnum())):
-            #        self.setFormat(index, length, rule[1])
-            #    index = expression.indexIn(text, index + length)
-        for rule in self.exprules:
-            expression = rule[0]
-            #index = expression.indexIn(text)
+    def _apply_extended_rules(self, text, lentxt, prevst):
+        for expression, prefix_skip, fmt, suffix_skip in self.exprules:
             matches = expression.globalMatch(text)
-            #while index >= 0:
-            while(matches.hasNext()):
+            while matches.hasNext():
                 match = matches.next()
                 index = match.capturedStart()
                 index_end = match.capturedEnd()
                 length = index_end - index
-                #length = expression.matchedLength()
-                if index == 0 or not text[index-1].isalnum():
-                    self.setFormat(index+rule[1], length-rule[1]-rule[3], rule[2])
-                    #mt = expression.cap(0)
+                if index == 0 or not text[index - 1].isalnum():
+                    self.setFormat(index + prefix_skip, length - prefix_skip - suffix_skip, fmt)
                     mt = match.capturedTexts()[0]
                     ei_m = self.prodbegExp.match(mt)
-                    #ei = self.prodbegExp.indexIn(mt)
                     ei = ei_m.capturedStart()
                     if ei >= 0 and str(ei_m.captured(0))[-1] == '(':
-                    #if ei >= 0 and str(self.prodbegExp.cap(0))[-1] == '(':
-                        previousProductionState = self.previousBlockState()
-                        imbricatedParanthesis = 1
-                        for c in mt[ei_m.capturedEnd() +1:]:
-                        #for c in mt[ei+len(self.prodbegExp.cap(0))+1:]:
-                          if c == '(': imbricatedParanthesis += 1
-                          if c == ')': 
-                            imbricatedParanthesis -= 1
-                            if imbricatedParanthesis <= 0:
-                               self.setCurrentBlockState(previousProductionState)
-                               break
-                        if imbricatedParanthesis > 0:
-                            lid = self.genlineid()
+                        previous_production_state = self.previousBlockState()
+                        imbricated = 1
+                        for c in mt[ei_m.capturedEnd() + 1:]:
+                            if c == '(':
+                                imbricated += 1
+                            if c == ')':
+                                imbricated -= 1
+                                if imbricated <= 0:
+                                    self.setCurrentBlockState(previous_production_state)
+                                    break
+                        if imbricated > 0:
+                            lid = self.tracker.open_paren_state(imbricated, previous_production_state)
                             self.setCurrentBlockState(lid)
-                            self.linedata[lid] = LineData(imbricatedParanthesis,previousProductionState)                        
-                #index = expression.indexIn(text, index + length)
-        if self.tabviewactivated:
-            match = self.tabRule.match(text)
-            #index = self.tabRule.indexIn(text)
-            index = match.capturedStart()
-            if index >= 0:
-                end_m = match.capturedEnd()
-                #length = self.tabRule.matchedLength()
-                #for i in range(index,index+length):
-                for i in range(index, end_m):
-                    if text[i] == '\t':
-                        self.setFormat(i, 1 , self.tabFormat)
-                    else:
-                        self.setFormat(i, 1 , self.spaceFormat)
-        commentExp = self.commentExp #if self.currentBlockState() == 0 else self.ruleCommentExp
-        matches = commentExp.globalMatch(text)
-        #index = commentExp.indexIn(text)
-        #while index >= 0:
+
+    def _apply_tab_view(self, text):
+        match = self.tabRule.match(text)
+        index = match.capturedStart()
+        if index >= 0:
+            end_m = match.capturedEnd()
+            for i in range(index, end_m):
+                if text[i] == '\t':
+                    self.setFormat(i, 1, self.tabFormat)
+                else:
+                    self.setFormat(i, 1, self.spaceFormat)
+
+    def _apply_comments(self, text):
+        matches = self.commentExp.globalMatch(text)
         while matches.hasNext():
             m = matches.next()
             index = m.capturedStart()
             length = m.capturedEnd()
-            #length = commentExp.matchedLength()
             self.setFormat(index, length, self.commentFormat)
-            #index = commentExp.indexIn(text,index+length+2)
-    
+
+
+# ---------------------------------------------------------------------------
+# Margin (line numbers + markers)
+# ---------------------------------------------------------------------------
+
 class Margin(QWidget):
-    
+
     lineClicked = Signal(int)
 
     def __init__(self,parent,editor):
@@ -262,11 +436,10 @@ class Margin(QWidget):
                         painter.drawPixmap(32,rect.top()+2,self.markerType[m])
                 h = rect.top()+rect.height()+1
             painter.end()
-    
+
     def mousePressEvent( self, event ):
-        line = self.editor.cursorForPosition(event.pos()).blockNumber() 
+        line = self.editor.cursorForPosition(event.pos()).blockNumber()
         self.lineClicked.emit(line+1)
-        #self.emit(SIGNAL("lineClicked(int)"),)
     def clear( self ):
         self.removeAllMarkers()
         self.markerType = {}
@@ -304,14 +477,14 @@ class Margin(QWidget):
                 del self.markerStack[line]
         self.update()
     def removeAllMarkersAt(self,line):
-        if line in self.marker:
+        if line in self.markers:
             del self.markers[line]
         if line in self.markerStack:
-            del self.markerStack[line]        
+            del self.markerStack[line]
         self.update()
     def removeAllMarkers(self):
         self.markers = {}
-        self.markerStack = {}        
+        self.markerStack = {}
         self.update()
     def addMarkerAt(self,line,id):
         val = self.markers.get(line,None)
@@ -320,7 +493,7 @@ class Margin(QWidget):
                 self.markerStack[line] = []
             self.markerStack[line].append(val)
         self.markers[line] = id
-        self.update()    
+        self.update()
     def appendMarkerAt(self,line,id):
         val = self.markers.get(line,None)
         if not val is None:
@@ -329,7 +502,7 @@ class Margin(QWidget):
             self.markerStack[line].append(id)
         else:
             self.markers[line] = id
-        self.update()    
+        self.update()
     def defineMarker(self,id,pixmap):
         self.markerType[id] = pixmap
     def getAllMarkers(self,id):
@@ -347,7 +520,7 @@ class Margin(QWidget):
             if l <= line+decal:
                 markerStack[l] = v
             elif l > line:
-                markerStack[l+decal] = v        
+                markerStack[l+decal] = v
         if decal > 0:
           for l,v in self.markers.items():
             if l < line:
@@ -370,7 +543,8 @@ class Margin(QWidget):
             self.markers,self.markerStack = obj.markersState
         else:
             self.removeAllMarkers()
-        
+
+
 ErrorMarker,BreakPointMarker,CodePointMarker = list(range(3))
 
 class LpyCodeEditor(QTextEdit):
@@ -396,7 +570,6 @@ class LpyCodeEditor(QTextEdit):
         self.syntaxhighlighter = LpySyntaxHighlighter(self)
         self.zoomFactor = 0
         self.editionFont = None
-        #self.syntaxhighlighter.setDocument(self.defaultdoc)
     def initWithEditor(self,lpyeditor):
         self.editor = lpyeditor
         self.findEdit = lpyeditor.findEdit
@@ -436,7 +609,7 @@ class LpyCodeEditor(QTextEdit):
         self.sidebar.defineMarker(ErrorMarker,QPixmap(':/images/icons/warningsErrors16.png'))
         self.sidebar.defineMarker(BreakPointMarker,QPixmap(':/images/icons/BreakPoint.png'))
         self.sidebar.defineMarker(CodePointMarker,QPixmap(':/images/icons/greenarrow16.png'))
-        self.sidebar.show() 
+        self.sidebar.show()
         self.sidebar.lineClicked.connect(self.checkLine)
     def checkLine(self,line):
         self.statusBar.showMessage("Line "+str(line)+" clicked",2000)
@@ -518,7 +691,7 @@ class LpyCodeEditor(QTextEdit):
             elif event.key() == Qt.Key_Tab :
                 self.tabEvent()
             if rev != self.document().revision():
-                self.sidebar.decalMarkers(bbn+sbn,-sbn)        
+                self.sidebar.decalMarkers(bbn+sbn,-sbn)
     def returnEvent(self):
         cursor = self.textCursor()
         beg = cursor.selectionStart()
@@ -559,14 +732,14 @@ class LpyCodeEditor(QTextEdit):
             cursor = self.textCursor()
             if cursor.hasSelection():
                 cursor.joinPreviousEditBlock()
-                cursor.deletePreviousChar() 
+                cursor.deletePreviousChar()
                 self.tab(cursor)
-                cursor.endEditBlock()        
+                cursor.endEditBlock()
             else:
                 cursor.joinPreviousEditBlock()
-                cursor.deletePreviousChar() 
+                cursor.deletePreviousChar()
                 cursor.insertText(self.indentation)
-                cursor.endEditBlock()        
+                cursor.endEditBlock()
     def getFindOptions(self):
         options = QTextDocument.FindFlags()
         if self.matchCaseButton.isChecked():
@@ -577,7 +750,7 @@ class LpyCodeEditor(QTextEdit):
     def cursorAtStart(self):
         cursor = self.textCursor()
         cursor.setPosition(0,QTextCursor.MoveAnchor)
-        self.setTextCursor(cursor)            
+        self.setTextCursor(cursor)
     def focusFind(self):
         if not self.frameFind.isVisible():
             self.setfindEditColor(QColor(255,255,255))
@@ -595,15 +768,14 @@ class LpyCodeEditor(QTextEdit):
                 self.findEdit.setText(cursor.selectedText())
                 self.findEdit.selectAll()
                 self.findEdit.setFocus()
-            
-    def findNextText(self):        
+
+    def findNextText(self):
         txt = self.findEdit.text()
         found = self.find(txt,self.getFindOptions())
         if found:
             self.setFocus()
             self.setfindEditColor(QColor(255,255,255))
         else:
-            #self.statusBar.showMessage('Text not found !',2000)
             self.findEndOFFile()
             self.cursorAtStart()
             self.setfindEditColor(QColor(255,100,100))
@@ -616,14 +788,13 @@ class LpyCodeEditor(QTextEdit):
             q.setPixmap(QPixmap(':/images/icons/wrap.png'))
             self.statusBar.addWidget(q)
             self.statusBar.showMessage('     End of page found, restart from top !',2000)
-            QTimer.singleShot(2000,lambda : self.statusBar.removeWidget(q))            
+            QTimer.singleShot(2000,lambda : self.statusBar.removeWidget(q))
     def findPreviousText(self):
         txt = self.findEdit.text()
         found = self.find(txt,QTextDocument.FindBackward|self.getFindOptions())
         if found:
             self.setFocus()
         else:
-            
             self.findEndOFFile()
             self.cursorAtStart()
     def findText(self,txt):
@@ -636,7 +807,7 @@ class LpyCodeEditor(QTextEdit):
         cursor = self.textCursor()
         if cursor.selectedText() == txt:
             cursor.beginEditBlock()
-            cursor.removeSelectedText() 
+            cursor.removeSelectedText()
             cursor.insertText(self.replaceEdit.text())
             cursor.endEditBlock()
             self.find(txt,self.getFindOptions())
@@ -645,7 +816,7 @@ class LpyCodeEditor(QTextEdit):
     def replaceAllText(self):
         txt = self.findEdit.text()
         cursor = self.textCursor()
-        if cursor.selectedText() == txt:        
+        if cursor.selectedText() == txt:
             nboccurrence = 1
             cursor.beginEditBlock()
             cursor.removeSelectedText()
@@ -656,7 +827,7 @@ class LpyCodeEditor(QTextEdit):
                 cursor = self.textCursor()
                 cursor.removeSelectedText()
                 cursor.insertText(self.replaceEdit.text())
-                found = self.find(txt,self.getFindOptions())            
+                found = self.find(txt,self.getFindOptions())
             cursor.endEditBlock()
             self.statusBar.showMessage('Replace '+str(nboccurrence)+' occurrences.',5000)
             self.cursorAtStart()
@@ -674,7 +845,6 @@ class LpyCodeEditor(QTextEdit):
         if source.hasUrls():
             return True
         else: return source.hasText()
-            # return qt.QtGui.QTextEdit.canInsertFromMimeData(self,source)
     def insertFromMimeData(self,source):
         if source.hasUrls():
             if not self.editor is None:
@@ -686,7 +856,7 @@ class LpyCodeEditor(QTextEdit):
                 else:
                     path = url.toLocalFile()
                 self.editor.openfile(path)
-        else : 
+        else :
             nsource = QMimeData()
             nsource.setText(source.text())
             return QTextEdit.insertFromMimeData(self,nsource)
@@ -695,7 +865,7 @@ class LpyCodeEditor(QTextEdit):
         beg = cursor.selectionStart()
         end = cursor.selectionEnd()
         pos = cursor.position()
-        cursor.beginEditBlock() 
+        cursor.beginEditBlock()
         cursor.setPosition(beg,QTextCursor.MoveAnchor)
         cursor.movePosition(QTextCursor.StartOfBlock,QTextCursor.MoveAnchor)
         while cursor.position() <= end:
@@ -765,7 +935,7 @@ class LpyCodeEditor(QTextEdit):
                     b = cursor.movePosition(QTextCursor.NextCharacter,QTextCursor.KeepAnchor)
                     if not b : break
                 if cursor.selectedText() == self.indentation:
-                    cursor.removeSelectedText()                    
+                    cursor.removeSelectedText()
             end-=1
             cursor.movePosition(QTextCursor.Down,QTextCursor.MoveAnchor)
             cursor.movePosition(QTextCursor.StartOfBlock,QTextCursor.MoveAnchor)
@@ -774,7 +944,7 @@ class LpyCodeEditor(QTextEdit):
     def hightlightError(self,lineno):
         if self.editor : self.editor.textEditionWatch = False
         if self.hasError:
-            self.clearErrorHightlight()        
+            self.clearErrorHightlight()
         if lineno < self.document().lineCount() :
             self.sidebar.addMarkerAt(lineno,ErrorMarker)
             self.errorLine = lineno
@@ -782,7 +952,7 @@ class LpyCodeEditor(QTextEdit):
             cursor.setPosition(0)
             cursor.movePosition(QTextCursor.NextBlock,QTextCursor.MoveAnchor,lineno-1)
             cursor.movePosition(QTextCursor.EndOfBlock,QTextCursor.KeepAnchor)
-            errorformat = QTextCharFormat() 
+            errorformat = QTextCharFormat()
             errorformat.setBackground(Qt.yellow)
             cursor.setCharFormat(errorformat)
             self.gotoLine(lineno)
@@ -792,7 +962,7 @@ class LpyCodeEditor(QTextEdit):
         cursor = self.textCursor()
         self.undo()
         self.setTextCursor(cursor)
-        self.hasError = False  
+        self.hasError = False
         self.sidebar.removeCurrentMarkerAt(self.errorLine)
     def setEditionFontFamily(self,font):
         font.setPointSize( self.currentFont().pointSize() )
@@ -824,7 +994,7 @@ class LpyCodeEditor(QTextEdit):
         if self.hasError:
             self.clearErrorHightlight()
         firstinit = simu.textdocument is None
-        if firstinit:            
+        if firstinit:
             simu.textdocument = self.document().clone()
         self.setLpyDocument(simu.textdocument)
         if firstinit:

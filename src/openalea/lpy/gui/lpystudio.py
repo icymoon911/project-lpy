@@ -102,18 +102,51 @@ class LPyWindow(QMainWindow, lsmw.Ui_MainWindow, ComputationTaskManager) :
         self.withinterpreter = withinterpreter
         self.setupUi(self)
         self.editToolBar.hide()
+
+        self._init_docks_and_panels()
+        self._init_preference_defaults()
+        self._init_viewer_and_abort()
+        self._init_editor_and_debugger()
+        self._connect_signals()
+        self._init_menus()
+
+        self.centralViewIsGL = False
+        self.svnLastRevisionChecked = 0
+        self.svnLastDateChecked = 0.0
+        self.stackedWidget.setCurrentIndex(0)
+        self.setAnimated(False)
+        settings.restoreState(self)
+        self.createRecentMenu()
+        try:
+            self.createTutorialMenu()
+        except Exception:
+            pass
+        self.textEditionWatch = True
+        self._initialized = False
+        try:
+            self.lpy_update_enabled = self.check_lpy_update_available()
+        except Exception:
+            pass
+
+    # ------------------------------------------------- init sub-steps
+
+    def _init_docks_and_panels(self):
+        """Create docks, shell (deferred), and panel manager."""
         lpydock.initDocks(self)
-
         QTimer.singleShot(1000, lambda: lpydock.initShell(self))
+        self.panelmanager = ObjectPanelManager(self)
 
+    def _init_preference_defaults(self):
+        """Initialise every preference attribute to its default value."""
         self.preferences = lpypreferences.LpyPreferences(self)
         icon = QIcon()
-        icon.addPixmap(QPixmap(":/images/icons/history.png"),QIcon.Normal,QIcon.Off)
+        icon.addPixmap(QPixmap(":/images/icons/history.png"), QIcon.Normal, QIcon.Off)
         self.menuRecents.setIcon(icon)
+
         self.simulations = []
         self.currentSimulationId = None
         self.history = []
-        self.historymaxsize = 50 
+        self.historymaxsize = 50
         self.fileBackupEnabled = True
         self.codeBackupEnabled = True
         self.fitAnimationView = True
@@ -126,18 +159,30 @@ class LPyWindow(QMainWindow, lsmw.Ui_MainWindow, ComputationTaskManager) :
         self.exitWithoutPrompt = False
         self.cCompilerPath = ''
         self.profilingMode = ProfilingWithFinalPlot
-        self.desc_items = {'__authors__'   : self.authorsEdit,
-                          '__institutes__': self.intitutesEdit,
-                          '__copyright__' : self.copyrightEdit,
-                          '__description__' : self.descriptionEdit,
-                          '__references__' : self.referenceEdit }
         self.com_mutex = QMutex()
         self.com_waitcondition = QWaitCondition()
         self.killsimudialog = KillSimulationDialog(self)
+        self.textEditionWatch = False
+
+        # Description-item mapping – centralised constant instead of
+        # scattered inside __init__.  The keys are the Python attribute
+        # names inside an LPy file; the values are the QTextEdit widgets
+        # declared in the .ui file.
+        self.desc_items = {
+            '__authors__':    self.authorsEdit,
+            '__institutes__': self.intitutesEdit,
+            '__copyright__':  self.copyrightEdit,
+            '__description__': self.descriptionEdit,
+            '__references__': self.referenceEdit,
+        }
+
+    def _init_viewer_and_abort(self):
+        """Wire up the 3D viewer plotter and the abort-on-dialog helper."""
         self.plotter = LpyPlotter(self)
         self.use_own_view3D = False
         self.viewer = Viewer
         registerPlotter(self.plotter)
+
         class ViewerFuncAborter:
             def __init__(self):
                 self.__shouldAbort = False
@@ -155,104 +200,99 @@ class LPyWindow(QMainWindow, lsmw.Ui_MainWindow, ComputationTaskManager) :
                     return True
                 else:
                     return False
-        self.viewAbortFunc =  ViewerFuncAborter()        
-        self.frameFind.hide() 
-        self.frameReplace.hide() 
-        self.frameGoto.hide() 
-        self.codeeditor.initWithEditor(self)        
+        self.viewAbortFunc = ViewerFuncAborter()
+
+    def _init_editor_and_debugger(self):
+        """Hide search frames, initialise the code editor, debugger, status."""
+        self.frameFind.hide()
+        self.frameReplace.hide()
+        self.frameGoto.hide()
+        self.codeeditor.initWithEditor(self)
         self.debugMode = False
         self.debugger = LpyVisualDebugger(self)
         st = self.statusBar()
         self.materialed.statusBar = st
-        self.panelmanager = ObjectPanelManager(self)
-        #self.documentNames.setShape(QTabBar.TriangularNorth)
-        #self.documentNames.setTabsClosable(True)
         self.newfile()
-        self.textEditionWatch = False
         self.documentNames.connectTo(self)
 
-        self.endTask.connect(self.endTaskCheck) 
-        # self.documentNamesMore.newDocumentRequest = Signal() # AUTO SIGNAL TRANSLATION in class LPyWindow
-        self.documentNamesMore.newDocumentRequest.connect(self.newfile) 
-        # self.documentNamesMore2.newDocumentRequest = Signal() # AUTO SIGNAL TRANSLATION in class LPyWindow
-        self.documentNamesMore2.newDocumentRequest.connect(self.newfile) 
-        self.actionNew.triggered.connect(self.newfile) 
-        self.actionOpen.triggered.connect(lambda : self.openfile()) 
-        self.actionSave.triggered.connect(lambda : self.savefile()) 
-        self.actionSaveAll.triggered.connect(lambda : self.saveallfiles()) 
-        self.actionSaveAs.triggered.connect(self.saveas) 
-        self.actionClose.triggered.connect(self.closeDoc) 
-        self.actionImportCpfgProject.triggered.connect(lambda : self.importcpfgproject()) 
-        self.actionImportCpfgFile.triggered.connect(lambda : self.importcpfgfile()) 
-        self.actionClear.triggered.connect(self.clearHistory) 
-        self.actionSaveSession.triggered.connect(self.saveSession) 
-        self.actionRun.triggered.connect(self.run) 
-        self.actionAnimate.triggered.connect(self.animate) 
-        self.actionStep.triggered.connect(self.step) 
-        self.actionRewind.triggered.connect(self.rewind) 
-        self.actionStepInterpretation.triggered.connect(self.stepInterpretation) 
-        self.actionIterateTo.triggered.connect(self.iterateTo) 
-        self.actionNextIterate.triggered.connect(self.nextIterate) 
-        self.actionAutoRun.triggered.connect(self.projectAutoRun) 
-        self.actionDebug.triggered.connect(self.debug) 
-        self.actionProfile.triggered.connect(self.profile) 
-        self.actionRecord.triggered.connect(self.record) 
-        self.actionStop.triggered.connect(self.cancelTask) 
-        self.actionStop.triggered.connect(self.abortViewer) 
-        self.actionExecute.triggered.connect(self.executeCode) 
-        self.actionComment.triggered.connect(self.codeeditor.comment) 
-        self.actionUncomment.triggered.connect(self.codeeditor.uncomment) 
-        self.actionInsertTab.triggered.connect(self.codeeditor.tab) 
-        self.actionRemoveTab.triggered.connect(self.codeeditor.untab) 
-        self.actionSyntax.triggered.connect(self.setSyntaxHighLightActivation) 
-        self.actionTabHightlight.triggered.connect(self.setTabHighLightActivation) 
-        self.actionPreferences.triggered.connect(self.preferences.show) 
-        self.animtimestep.valueChanged.connect(self.setTimeStep) 
-        self.animtimeSpinBox.valueChanged.connect(self.setTimeStep) 
-        self.codeeditor.textChanged.connect(self.textEdited) 
-        self.descriptionEdit.textChanged.connect(self.projectEdited) 
-        self.referenceEdit.textChanged.connect(self.projectEdited) 
-        self.authorsEdit.textChanged.connect(self.projectEdited) 
-        self.intitutesEdit.textChanged.connect(self.projectEdited) 
-        self.copyrightEdit.textChanged.connect(self.projectEdited) 
-        self.materialed.valueChanged.connect(self.projectEdited) 
-        self.scalarEditor.valueChanged.connect(self.projectEdited) 
-        self.scalarEditor.valueChanged.connect(self.projectParameterEdited) 
-        self.actionPrint.triggered.connect(self.printCode) 
+    def _connect_signals(self):
+        """Wire all Qt signal/slot connections."""
+        # Task / document lifecycle
+        self.endTask.connect(self.endTaskCheck)
+        self.documentNamesMore.newDocumentRequest.connect(self.newfile)
+        self.documentNamesMore2.newDocumentRequest.connect(self.newfile)
+
+        # File actions
+        self.actionNew.triggered.connect(self.newfile)
+        self.actionOpen.triggered.connect(lambda: self.openfile())
+        self.actionSave.triggered.connect(lambda: self.savefile())
+        self.actionSaveAll.triggered.connect(lambda: self.saveallfiles())
+        self.actionSaveAs.triggered.connect(self.saveas)
+        self.actionClose.triggered.connect(self.closeDoc)
+        self.actionImportCpfgProject.triggered.connect(lambda: self.importcpfgproject())
+        self.actionImportCpfgFile.triggered.connect(lambda: self.importcpfgfile())
+        self.actionClear.triggered.connect(self.clearHistory)
+        self.actionSaveSession.triggered.connect(self.saveSession)
+
+        # Simulation control
+        self.actionRun.triggered.connect(self.run)
+        self.actionAnimate.triggered.connect(self.animate)
+        self.actionStep.triggered.connect(self.step)
+        self.actionRewind.triggered.connect(self.rewind)
+        self.actionStepInterpretation.triggered.connect(self.stepInterpretation)
+        self.actionIterateTo.triggered.connect(self.iterateTo)
+        self.actionNextIterate.triggered.connect(self.nextIterate)
+        self.actionAutoRun.triggered.connect(self.projectAutoRun)
+        self.actionDebug.triggered.connect(self.debug)
+        self.actionProfile.triggered.connect(self.profile)
+        self.actionRecord.triggered.connect(self.record)
+        self.actionStop.triggered.connect(self.cancelTask)
+        self.actionStop.triggered.connect(self.abortViewer)
+        self.actionExecute.triggered.connect(self.executeCode)
+
+        # Editor actions
+        self.actionComment.triggered.connect(self.codeeditor.comment)
+        self.actionUncomment.triggered.connect(self.codeeditor.uncomment)
+        self.actionInsertTab.triggered.connect(self.codeeditor.tab)
+        self.actionRemoveTab.triggered.connect(self.codeeditor.untab)
+        self.actionSyntax.triggered.connect(self.setSyntaxHighLightActivation)
+        self.actionTabHightlight.triggered.connect(self.setTabHighLightActivation)
+        self.actionPreferences.triggered.connect(self.preferences.show)
+        self.animtimestep.valueChanged.connect(self.setTimeStep)
+        self.animtimeSpinBox.valueChanged.connect(self.setTimeStep)
+
+        # Content-edit notifications
+        self.codeeditor.textChanged.connect(self.textEdited)
+        self.descriptionEdit.textChanged.connect(self.projectEdited)
+        self.referenceEdit.textChanged.connect(self.projectEdited)
+        self.authorsEdit.textChanged.connect(self.projectEdited)
+        self.intitutesEdit.textChanged.connect(self.projectEdited)
+        self.copyrightEdit.textChanged.connect(self.projectEdited)
+        self.materialed.valueChanged.connect(self.projectEdited)
+        self.scalarEditor.valueChanged.connect(self.projectEdited)
+        self.scalarEditor.valueChanged.connect(self.projectParameterEdited)
+
+        # Misc actions
+        self.actionPrint.triggered.connect(self.printCode)
         self.actionView3D.setEnabled(self.use_own_view3D)
-        self.actionView3D.triggered.connect(self.switchCentralView) 
-        self.aboutLpy = lambda x : doc.aboutLpy(self)
-        self.actionAbout.triggered.connect(self.aboutLpy) 
-        self.actionAboutQt.triggered.connect(QApplication.aboutQt) 
-        self.aboutVPlants = lambda x : doc.aboutVPlants(self)
-        self.helpDisplay.setText(doc.getSpecification())        
-        self.actionOnlineHelp.triggered.connect(self.onlinehelp) 
-        self.actionSubmitBug.triggered.connect(self.submitBug) 
-        self.actionCheckUpdate.triggered.connect(self.check_lpy_update) 
-        self.actionUseThread.triggered.connect(self.toggleUseThread) 
-        self.actionFitAnimationView.triggered.connect(self.toggleFitAnimationView) 
-        self.menuRecents.triggered.connect(self.recentMenuAction) 
+        self.actionView3D.triggered.connect(self.switchCentralView)
+        self.aboutLpy = lambda x: doc.aboutLpy(self)
+        self.actionAbout.triggered.connect(self.aboutLpy)
+        self.actionAboutQt.triggered.connect(QApplication.aboutQt)
+        self.aboutVPlants = lambda x: doc.aboutVPlants(self)
+        self.actionOnlineHelp.triggered.connect(self.onlinehelp)
+        self.actionSubmitBug.triggered.connect(self.submitBug)
+        self.actionCheckUpdate.triggered.connect(self.check_lpy_update)
+        self.actionUseThread.triggered.connect(self.toggleUseThread)
+        self.actionFitAnimationView.triggered.connect(self.toggleFitAnimationView)
+        self.menuRecents.triggered.connect(self.recentMenuAction)
         self.actionClearShellWidget.triggered.connect(self.clearShell)
+
+    def _init_menus(self):
+        """Populate help text, SVN menu, and window title."""
+        self.helpDisplay.setText(doc.getSpecification())
         self.initSVNMenu()
         self.printTitle()
-        self.centralViewIsGL = False
-        self.svnLastRevisionChecked = 0
-        self.svnLastDateChecked = 0.0
-        self.stackedWidget.setCurrentIndex(0)
-        self.setAnimated(False)
-        settings.restoreState(self)
-        self.createRecentMenu()
-        #if not py2exe_release:
-        try:
-            self.createTutorialMenu()
-        except:
-            pass
-        self.textEditionWatch = True
-        self._initialized = False        
-        try:
-            self.lpy_update_enabled = self.check_lpy_update_available()
-        except:
-            pass
 
     def init(self):
         self.textEditionWatch = False
