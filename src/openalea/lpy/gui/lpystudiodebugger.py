@@ -16,7 +16,7 @@ class AbortDebugger(Exception):
         Exception.__init__(self,txt)
 
 def toHtml(txt):
-    return txt.replace('<','&lt;').replace('<','&gt;')
+    return txt.replace('<','&lt;').replace('>','&gt;')
     
         
 class LpyVisualDebugger (lpy.LpyDebugger):

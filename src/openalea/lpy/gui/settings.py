@@ -7,6 +7,16 @@ from openalea.lpy import LPY_VERSION_MAJOR
 import os
 
 
+def _to_bool(value):
+    """Convert a QSettings value to bool, handling None, bool, and
+    case-insensitive string representations ('true'/'True'/'TRUE', etc.)."""
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() == 'true'
+
+
 def getSettings():
     settings = QSettings(QSettings.IniFormat, QSettings.UserScope,'OpenAlea','LPy'+str(LPY_VERSION_MAJOR))
     return settings
@@ -16,9 +26,11 @@ def restoreState(lpywidget):
     settings = getSettings()
     settings.beginGroup('history')
 
-    lpywidget.history = [ str(i) for i in list(settings.value('RecentFiles')) if not i is None and len(i) > 0]
+    recentFilesValue = settings.value('RecentFiles')
+    lpywidget.history = [ str(i) for i in list(recentFilesValue) if not i is None and len(i) > 0] if recentFilesValue is not None else []
     try:
-        openedfiles = [ str(i) for i in list(settings.value('OpenedFiles')) if not i is None and len(i) > 0]
+        openedFilesValue = settings.value('OpenedFiles')
+        openedfiles = [ str(i) for i in list(openedFilesValue) if not i is None and len(i) > 0] if openedFilesValue is not None else []
     except:
         openedfiles = ''
     try:
@@ -33,23 +45,23 @@ def restoreState(lpywidget):
     settings.endGroup()
     settings.beginGroup('file')
     # settings.value send "true" if value is "True" (and "false" if it is "False")
-    lpywidget.reloadAtStartup = settings.value('reloadstartup',lpywidget.reloadAtStartup)=='true'
-    lpywidget.fileMonitoring = settings.value('fileMonitoring',lpywidget.fileMonitoring)=='true'
-    lpywidget.fileBackupEnabled = settings.value('fileBackup',lpywidget.fileBackupEnabled)=='true'
-    lpywidget.codeBackupEnabled = settings.value('codeBackup',lpywidget.codeBackupEnabled)=='true'
+    lpywidget.reloadAtStartup = _to_bool(settings.value('reloadstartup',lpywidget.reloadAtStartup))
+    lpywidget.fileMonitoring = _to_bool(settings.value('fileMonitoring',lpywidget.fileMonitoring))
+    lpywidget.fileBackupEnabled = _to_bool(settings.value('fileBackup',lpywidget.fileBackupEnabled))
+    lpywidget.codeBackupEnabled = _to_bool(settings.value('codeBackup',lpywidget.codeBackupEnabled))
     settings.endGroup()
     settings.beginGroup('compilation')
-    lpywidget.showPyCode = settings.value('showPythonCode',lpywidget.showPyCode)=='true'
+    lpywidget.showPyCode = _to_bool(settings.value('showPythonCode',lpywidget.showPyCode))
     lpywidget.setCCompilerPath(settings.value('CCompilerPath',str('')))
     settings.endGroup()
     settings.beginGroup('threading')
-    lpywidget.with_thread = settings.value('activated',lpywidget.with_thread)=='true'
+    lpywidget.with_thread = _to_bool(settings.value('activated',lpywidget.with_thread))
     settings.endGroup()
     settings.beginGroup('view3D')
-    lpywidget.fitAnimationView = settings.value('fitAnimationView',lpywidget.fitAnimationView)=='true' 
-    lpywidget.fitRunView = settings.value('fitRunView',lpywidget.fitRunView)=='true' 
-    lpywidget.setIntegratedView3D(settings.value('integratedView',lpywidget.use_own_view3D)=='true')
-    lpywidget.displayMetaInfo = settings.value('displayMetaInfoAtRun',lpywidget.displayMetaInfo)=='true'
+    lpywidget.fitAnimationView = _to_bool(settings.value('fitAnimationView',lpywidget.fitAnimationView))
+    lpywidget.fitRunView = _to_bool(settings.value('fitRunView',lpywidget.fitRunView))
+    lpywidget.setIntegratedView3D(_to_bool(settings.value('integratedView',lpywidget.use_own_view3D)))
+    lpywidget.displayMetaInfo = _to_bool(settings.value('displayMetaInfoAtRun',lpywidget.displayMetaInfo))
     settings.endGroup()
     settings.beginGroup('profiling')
     try:
@@ -60,16 +72,16 @@ def restoreState(lpywidget):
     settings.beginGroup('application')
     lpywidget.svnLastRevisionChecked = int(settings.value('svnLastRevisionChecked',lpywidget.svnLastRevisionChecked))
     lpywidget.svnLastDateChecked = float(settings.value('svnLastDateChecked',lpywidget.svnLastDateChecked))
-    lpywidget.safeLaunch = settings.value('safeLaunch',False)=='true'
+    lpywidget.safeLaunch = _to_bool(settings.value('safeLaunch',False))
     import sys
     if '--safe' in sys.argv:    lpywidget.safeLaunch = True
     if '--no-safe' in sys.argv:    lpywidget.safeLaunch = False
     settings.endGroup()
     settings.beginGroup('syntax')
-    syntaxhlght = settings.value('highlighted',True) == 'true'
+    syntaxhlght = _to_bool(settings.value('highlighted',True))
     lpywidget.codeeditor.setSyntaxHighLightActivation(syntaxhlght)
     lpywidget.actionSyntax.setChecked(syntaxhlght)
-    tabhlght = settings.value('tabview',True) == 'true'
+    tabhlght = _to_bool(settings.value('tabview',True))
     lpywidget.codeeditor.setTabHighLightActivation(tabhlght)
     lpywidget.actionTabHightlight.setChecked(tabhlght)
     settings.endGroup()
@@ -107,7 +119,7 @@ def restoreState(lpywidget):
     #settings.endGroup()
     
     settings.beginGroup('edition')
-    lpywidget.codeeditor.replaceTab = settings.value('replaceTab',lpywidget.codeeditor.replaceTab)=='true'
+    lpywidget.codeeditor.replaceTab = _to_bool(settings.value('replaceTab',lpywidget.codeeditor.replaceTab))
     try:
         val = int(settings.value('tabSize',lpywidget.codeeditor.tabSize()))
         lpywidget.codeeditor.setTabSize(val)

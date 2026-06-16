@@ -134,8 +134,11 @@ class ComputationTaskManager(QObject):
         else: return True
     def releaseCR(self):
         """ release computation ressources """
-        self.computationMutex.tryLock()
-        self.computationMutex.unlock()
+        # Only unlock if we successfully acquire the lock.
+        # This avoids undefined behavior (crash on PyQt5) when calling
+        # unlock() on a mutex not held by the current thread.
+        if self.computationMutex.tryLock():
+            self.computationMutex.unlock()
         self.releaseEvent()
     def acquireEvent(self):
         pass
@@ -156,7 +159,9 @@ class ComputationTaskManager(QObject):
         #else:
         #    self.endErrorEvent(None)
     def getErrorMessage(self,exc_info):
-        exception = exc_info[1] 
+        if exc_info is None or exc_info[0] is None:
+            return 'UnknownError:An unexpected error occurred'
+        exception = exc_info[1]
         msg = str(exc_info[1])
         if exc_info[0] == SyntaxError and len(msg) == 0:
             msg = exc_info[1].msg
