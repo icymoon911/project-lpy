@@ -41,10 +41,13 @@ class KillSimulationDialog (QDialog,Ui_KillSimulationDialog):
                 self.timeout -= 1
                 self.timer.start()
             else:
-                self.timeLabel.setText(str(self.timeout))                
-                self.accept()
+                self.timeLabel.setText(str(self.timeout))
+                if self.condition():
+                    self.accept()
+                else:
+                    self.reject()
         else:
-            self.accept()
+            self.reject()
     def finishProcess(self):
         self.timer.stop()
         if self.condition():

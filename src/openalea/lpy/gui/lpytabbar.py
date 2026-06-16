@@ -36,7 +36,7 @@ class LpyTabBar(QTabBar):
                 if tabselect != self.initialtab:
                     self.switchDocument.emit(tabselect,self.initialtab)
             self.initialtab = None
-        QTabBar.mousePressEvent(self,event)
+        QTabBar.mouseReleaseEvent(self,event)
 
     # def mouseMoveEvent(self,event):
     #     tabselect = self.tabAt(event.pos())
